@@ -322,6 +322,16 @@ func (hrsi *SubscriberItem) removeNoMatchingName(indexFile *repo.IndexFile) erro
 	return nil
 }
 
+//checkKeywords Checks if the charts has at least 1 keyword from the packageFilter.Keywords array
+func (hrsi *SubscriberItem) checkKeywords(chartVersion *repo.ChartVersion) bool {
+	var labelSelector *metav1.LabelSelector
+	if hrsi.Subscription.Spec.PackageFilter != nil {
+		labelSelector = hrsi.Subscription.Spec.PackageFilter.LabelSelector
+	}
+
+	return utils.KeywordsChecker(labelSelector, chartVersion.Keywords)
+}
+
 //filterOnVersion filters the indexFile with the version, tillerVersion and Digest provided in the subscription
 //The version provided in the subscription can be an expression like ">=1.2.3" (see https://github.com/blang/semver)
 //The tillerVersion and the digest provided in the subscription must be literals.
@@ -336,7 +346,7 @@ func (hrsi *SubscriberItem) filterOnVersion(indexFile *repo.IndexFile) {
 		newChartVersions := make([]*repo.ChartVersion, 0)
 
 		for index, chartVersion := range chartVersions {
-			if hrsi.checkDigest(chartVersion) && hrsi.checkTillerVersion(chartVersion) && hrsi.checkVersion(chartVersion) {
+			if hrsi.checkKeywords(chartVersion) && hrsi.checkDigest(chartVersion) && hrsi.checkTillerVersion(chartVersion) && hrsi.checkVersion(chartVersion) {
 				newChartVersions = append(newChartVersions, chartVersions[index])
 			}
 		}
@@ -410,7 +420,7 @@ func (hrsi *SubscriberItem) checkVersion(chartVersion *repo.ChartVersion) bool {
 				versionVersion, err := semver.Parse(version)
 
 				if err != nil {
-					klog.Error(err)
+					klog.V(3).Info("Skipping error in parsing version, taking it as not match. The error is:", err)
 					return false
 				}
 
@@ -489,7 +499,8 @@ func (hrsi *SubscriberItem) manageHelmCR(indexFile *repo.IndexFile, repoURL stri
 	for packageName, chartVersions := range indexFile.Entries {
 		klog.V(5).Infof("chart: %s\n%v", packageName, chartVersions)
 
-		helmReleaseNewName := packageName + "-" + hrsi.Subscription.Name + "-" + hrsi.Subscription.Namespace
+		releaseCRName := packageName + "-" + hrsi.Subscription.Name + "-" + hrsi.Subscription.Namespace
+		releaseName := packageName
 
 		helmRelease := &releasev1alpha1.HelmRelease{}
 		//Create a new helrmReleases
@@ -511,11 +522,11 @@ func (hrsi *SubscriberItem) manageHelmCR(indexFile *repo.IndexFile, repoURL stri
 		}
 		//Check if Update or Create
 		err = hrsi.synchronizer.LocalClient.Get(context.TODO(),
-			types.NamespacedName{Name: helmReleaseNewName, Namespace: hrsi.Subscription.Namespace}, helmRelease)
+			types.NamespacedName{Name: releaseCRName, Namespace: hrsi.Subscription.Namespace}, helmRelease)
 
 		if err != nil {
 			if errors.IsNotFound(err) {
-				klog.V(2).Infof("Create helmRelease %s", helmReleaseNewName)
+				klog.V(2).Infof("Create helmRelease %s", releaseCRName)
 
 				helmRelease = &releasev1alpha1.HelmRelease{
 					TypeMeta: metav1.TypeMeta{
@@ -523,11 +534,11 @@ func (hrsi *SubscriberItem) manageHelmCR(indexFile *repo.IndexFile, repoURL stri
 						Kind:       "HelmRelease",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      helmReleaseNewName,
+						Name:      releaseCRName,
 						Namespace: hrsi.Subscription.Namespace,
 						OwnerReferences: []metav1.OwnerReference{{
-							APIVersion: hrsi.Subscription.APIVersion,
-							Kind:       hrsi.Subscription.Kind,
+							APIVersion: "app.ibm.com/v1alpha1",
+							Kind:       "Subscription",
 							Name:       hrsi.Subscription.Name,
 							UID:        hrsi.Subscription.UID,
 						}},
@@ -542,7 +553,7 @@ func (hrsi *SubscriberItem) manageHelmCR(indexFile *repo.IndexFile, repoURL stri
 						ConfigMapRef: hrsi.Channel.Spec.ConfigMapRef,
 						SecretRef:    hrsi.Channel.Spec.SecretRef,
 						ChartName:    packageName,
-						ReleaseName:  getReleaseName(helmReleaseNewName),
+						ReleaseName:  getReleaseName(releaseName),
 						Version:      chartVersions[0].GetVersion(),
 					},
 				}
@@ -555,7 +566,6 @@ func (hrsi *SubscriberItem) manageHelmCR(indexFile *repo.IndexFile, repoURL stri
 			helmRelease.APIVersion = "app.ibm.com/v1alpha1"
 			helmRelease.Kind = "HelmRelease"
 			klog.V(2).Infof("Update helmRelease spec %s", helmRelease.Name)
-			releaseName := helmRelease.Spec.ReleaseName
 			helmRelease.Spec = releasev1alpha1.HelmReleaseSpec{
 				Source: &releasev1alpha1.Source{
 					SourceType: releasev1alpha1.HelmRepoSourceType,

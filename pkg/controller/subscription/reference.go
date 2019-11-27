@@ -16,6 +16,7 @@ package subscription
 
 import (
 	"context"
+	"reflect"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -33,7 +34,10 @@ import (
 
 var SecretKindStr = "Secret"
 var ConfigMapKindStr = "ConfigMap"
-var SubscriptionGVK = schema.GroupVersionKind{Group: "app.ibm.com", Kind: "Subscription", Version: "v1alpha1"}
+var SubscriptionGVK = schema.GroupVersionKind{
+	Group:   appv1alpha1.SchemeGroupVersion.Group,
+	Kind:    "Subscription",
+	Version: appv1alpha1.SchemeGroupVersion.Version}
 
 //SercertReferredMarker is used as a label key to filter out the secert coming from reference
 var SercertReferredMarker = "IsReferredBySub-"
@@ -81,15 +85,32 @@ func (r *ReconcileSubscription) ListAndDeployReferredObject(instance *appv1alpha
 
 		if u.GetName() == refObj.GetName() {
 			found = true
-
 			lb[referLabel] = "true"
-			u.SetLabels(lb)
-			newOwers := addObjectOwnedBySub(u, instance)
-			u.SetOwnerReferences(newOwers)
 
-			err := r.Client.Update(context.TODO(), u)
-			if err != nil {
-				return err
+			if !reflect.DeepEqual(u, refObj) {
+				urerf := refObj
+				newOwers := addObjectOwnedBySub(u, instance)
+				t := types.UID("")
+
+				urerf.SetLabels(lb)
+				urerf.SetOwnerReferences(newOwers)
+				urerf.SetNamespace(insNs)
+				urerf.SetResourceVersion("")
+				urerf.SetUID(t)
+
+				err := r.Client.Update(context.TODO(), urerf)
+				if err != nil {
+					return err
+				}
+			} else {
+				u.SetLabels(lb)
+				newOwers := addObjectOwnedBySub(u, instance)
+				u.SetOwnerReferences(newOwers)
+
+				err := r.Client.Update(context.TODO(), u)
+				if err != nil {
+					return err
+				}
 			}
 
 			continue

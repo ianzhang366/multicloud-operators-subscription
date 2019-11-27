@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	dplv1alpha1 "github.com/IBM/multicloud-operators-deployable/pkg/apis/app/v1alpha1"
@@ -41,7 +42,8 @@ var (
 		Name:      "cluster",
 		Namespace: "namspace",
 	}
-	source = "synctest"
+
+	sourceprefix = "synctest-"
 )
 
 var (
@@ -88,7 +90,7 @@ func TestSyncStart(t *testing.T) {
 	mgr, err := manager.New(cfg, manager.Options{MetricsBindAddress: "0"})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, mgr.GetScheme(), &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	g.Expect(mgr.Add(sync)).NotTo(gomega.HaveOccurred())
@@ -104,7 +106,7 @@ func TestSyncStart(t *testing.T) {
 func TestHouseKeeping(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	sync.houseKeeping()
@@ -116,7 +118,7 @@ func TestRegisterDeRegister(t *testing.T) {
 	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
 	// channel when it is finished.
 
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	dpl := dplinstance.DeepCopy()
@@ -125,6 +127,7 @@ func TestRegisterDeRegister(t *testing.T) {
 		Name:      dpl.Name,
 		Namespace: dpl.Namespace,
 	}
+	source := sourceprefix + hostnn.String()
 
 	g.Expect(sync.RegisterTemplate(hostnn, dpl, source)).NotTo(gomega.HaveOccurred())
 
@@ -142,8 +145,8 @@ func TestRegisterDeRegister(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	anno := map[string]string{
-		dplv1alpha1.AnnotationHosting:    sharedkey.Namespace + "/" + sharedkey.Name,
 		appv1alpha1.AnnotationHosting:    sharedkey.Namespace + "/" + sharedkey.Name,
+		dplv1alpha1.AnnotationHosting:    sharedkey.Namespace + "/" + sharedkey.Name,
 		appv1alpha1.AnnotationSyncSource: source,
 	}
 	lbls := make(map[string]string)
@@ -177,12 +180,13 @@ func TestApply(t *testing.T) {
 	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
 	// channel when it is finished.
 
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	dpl := dplinstance.DeepCopy()
 	hostnn := sharedkey
 	dplnn := sharedkey
+	source := sourceprefix + hostnn.String()
 
 	g.Expect(sync.RegisterTemplate(hostnn, dpl, source)).NotTo(gomega.HaveOccurred())
 
@@ -203,6 +207,7 @@ func TestApply(t *testing.T) {
 
 	cfgmap := &corev1.ConfigMap{}
 	g.Expect(c.Get(context.TODO(), sharedkey, cfgmap)).NotTo(gomega.HaveOccurred())
+	newtplobj := cfgmap.DeepCopy()
 
 	g.Expect(sync.DeRegisterTemplate(hostnn, dplnn, source)).NotTo(gomega.HaveOccurred())
 	time.Sleep(1 * time.Second)
@@ -210,13 +215,31 @@ func TestApply(t *testing.T) {
 	err = c.Get(context.TODO(), sharedkey, cfgmap)
 
 	g.Expect(errors.IsNotFound(err)).Should(gomega.BeTrue())
+
+	// test create new with disallowed information
+	nu := &unstructured.Unstructured{}
+	nu.Object, err = runtime.DefaultUnstructuredConverter.ToUnstructured(newtplobj)
+	nu.DeepCopyInto(tplunit.Unstructured)
+
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(sync.applyTemplate(nri, resmap.Namespaced, reskey, tplunit, false)).NotTo(gomega.HaveOccurred())
+
+	defer c.Delete(context.TODO(), newtplobj)
+
+	g.Expect(c.Get(context.TODO(), sharedkey, cfgmap)).ShouldNot(gomega.HaveOccurred())
 }
 
 var (
-	crdgvk = schema.GroupVersionKind{
+	foocrdgvk = schema.GroupVersionKind{
 		Group:   "samplecontroller.k8s.io",
 		Version: "v1alpha1",
 		Kind:    "Foo",
+	}
+
+	crdgvk = schema.GroupVersionKind{
+		Group:   "apiextensions.k8s.io",
+		Version: "v1beta1",
+		Kind:    "CustomResourceDefinition",
 	}
 
 	crdkey = types.NamespacedName{
@@ -225,23 +248,52 @@ var (
 
 	crd = crdv1beta1.CustomResourceDefinition{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "CustomResourceDefinition",
-			APIVersion: "apiextensions.k8s.io/v1beta1",
+			Kind:       crdgvk.Kind,
+			APIVersion: crdgvk.GroupVersion().String(),
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: crdkey.Name,
 		},
 		Spec: crdv1beta1.CustomResourceDefinitionSpec{
-			Group:   "samplecontroller.k8s.io",
-			Version: "v1alpha1",
+			Group:   foocrdgvk.Group,
+			Version: foocrdgvk.Version,
 			Names: crdv1beta1.CustomResourceDefinitionNames{
 				Plural: "foos",
-				Kind:   "Foo",
+				Kind:   foocrdgvk.Kind,
 			},
 			Scope: crdv1beta1.NamespaceScoped,
 		},
 	}
 )
+
+func TestCRDDiscovery(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+
+	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
+	// channel when it is finished.
+
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	sync.rediscoverResource()
+	defer sync.stopCaching()
+
+	crdinstance := crd.DeepCopy()
+	g.Expect(c.Create(context.TODO(), crdinstance)).NotTo(gomega.HaveOccurred())
+	g.Expect(c.Get(context.TODO(), crdkey, crdinstance)).NotTo(gomega.HaveOccurred())
+
+	g.Expect(sync.KubeResources[foocrdgvk]).Should(gomega.BeNil())
+	sync.houseKeeping()
+	g.Expect(sync.KubeResources[foocrdgvk]).ShouldNot(gomega.BeNil())
+
+	c.Delete(context.TODO(), crdinstance)
+	time.Sleep(1 * time.Second)
+	g.Expect(errors.IsNotFound(c.Get(context.TODO(), crdkey, crdinstance))).Should(gomega.BeTrue())
+
+	g.Expect(sync.KubeResources[foocrdgvk]).ShouldNot(gomega.BeNil())
+	sync.houseKeeping()
+	g.Expect(sync.KubeResources[foocrdgvk]).Should(gomega.BeNil())
+}
 
 func TestClusterScopedApply(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
@@ -249,13 +301,11 @@ func TestClusterScopedApply(t *testing.T) {
 	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
 	// channel when it is finished.
 
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
-	stop := make(chan struct{})
-	sync.dynamicFactory.Start(stop)
-
-	defer close(stop)
+	sync.rediscoverResource()
+	defer sync.stopCaching()
 
 	sub := subinstance.DeepCopy()
 
@@ -268,9 +318,11 @@ func TestClusterScopedApply(t *testing.T) {
 	dpl.Spec.Template = &runtime.RawExtension{
 		Object: crd.DeepCopy(),
 	}
+	source := sourceprefix + hostnn.String()
+
 	g.Expect(sync.RegisterTemplate(hostnn, dpl, source)).NotTo(gomega.HaveOccurred())
 
-	_, ok := sync.KubeResources[crdgvk]
+	_, ok := sync.KubeResources[foocrdgvk]
 	g.Expect(ok).Should(gomega.BeFalse())
 
 	time.Sleep(1 * time.Second)
@@ -280,7 +332,7 @@ func TestClusterScopedApply(t *testing.T) {
 	result := &crdv1beta1.CustomResourceDefinition{}
 	g.Expect(c.Get(context.TODO(), crdkey, result)).NotTo(gomega.HaveOccurred())
 
-	_, ok = sync.KubeResources[crdgvk]
+	_, ok = sync.KubeResources[foocrdgvk]
 	g.Expect(ok).Should(gomega.BeTrue())
 
 	g.Expect(sync.DeRegisterTemplate(hostnn, dplnn, source)).NotTo(gomega.HaveOccurred())
@@ -294,6 +346,7 @@ func TestClusterScopedApply(t *testing.T) {
 func TestHarvestExisting(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
+	source := sourceprefix + sharedkey.String()
 	cfgmap := workloadconfigmap.DeepCopy()
 
 	var anno = map[string]string{
@@ -313,7 +366,7 @@ func TestHarvestExisting(t *testing.T) {
 
 	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
 	// channel when it is finished.
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	resgvk := schema.GroupVersionKind{
@@ -327,7 +380,7 @@ func TestHarvestExisting(t *testing.T) {
 
 	// object should be havested back before source is found
 	resmap := sync.KubeResources[resgvk]
-	g.Expect(sync.checkServerObjects(resmap)).NotTo(gomega.HaveOccurred())
+	g.Expect(sync.checkServerObjects(resgvk, resmap)).NotTo(gomega.HaveOccurred())
 
 	tplunit, ok := resmap.TemplateMap[reskey]
 	g.Expect(ok).Should(gomega.BeTrue())
@@ -376,6 +429,7 @@ func TestServiceResource(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	svc := service.DeepCopy()
+	source := sourceprefix + sharedkey.String()
 
 	var anno = map[string]string{
 		"app.ibm.com/hosting-deployable":   sharedkey.Namespace + "/" + sharedkey.Name,
@@ -392,7 +446,7 @@ func TestServiceResource(t *testing.T) {
 
 	defer c.Delete(context.TODO(), sub)
 
-	sync, err := CreateSynchronizer(cfg, cfg, &host, 2, nil)
+	sync, err := CreateSynchronizer(cfg, cfg, scheme.Scheme, &host, 2, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	g.Expect(c.Get(context.TODO(), sharedkey, svc)).NotTo(gomega.HaveOccurred())
@@ -410,7 +464,7 @@ func TestServiceResource(t *testing.T) {
 	reskey := sync.generateResourceMapKey(hostnn, dplnn)
 
 	// havest existing from cluster
-	g.Expect(sync.checkServerObjects(resmap)).NotTo(gomega.HaveOccurred())
+	g.Expect(sync.checkServerObjects(resgvk, resmap)).NotTo(gomega.HaveOccurred())
 
 	tplunit, ok := resmap.TemplateMap[reskey]
 	g.Expect(ok).Should(gomega.BeTrue())

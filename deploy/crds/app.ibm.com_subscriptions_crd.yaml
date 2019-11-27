@@ -16,6 +16,8 @@ spec:
     kind: Subscription
     listKind: SubscriptionList
     plural: subscriptions
+    shortNames:
+    - appsub
     singular: subscription
   scope: Namespaced
   subresources:
@@ -305,8 +307,6 @@ spec:
             statuses:
               description: For endpoint, it is the status of subscription, key is
                 packagename, For hub, it aggregates all status, key is cluster name
-          required:
-          - lastUpdateTime
           type: object
       type: object
   version: v1alpha1

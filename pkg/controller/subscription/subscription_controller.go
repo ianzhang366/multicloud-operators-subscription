@@ -39,7 +39,7 @@ import (
 	ghsub "github.com/IBM/multicloud-operators-subscription/pkg/subscriber/github"
 	hrsub "github.com/IBM/multicloud-operators-subscription/pkg/subscriber/helmrepo"
 	nssub "github.com/IBM/multicloud-operators-subscription/pkg/subscriber/namespace"
-	obs "github.com/IBM/multicloud-operators-subscription/pkg/subscriber/objectbucket"
+	ossub "github.com/IBM/multicloud-operators-subscription/pkg/subscriber/objectbucket"
 
 	"github.com/IBM/multicloud-operators-subscription/pkg/utils"
 )
@@ -70,7 +70,7 @@ func Add(mgr manager.Manager, hubconfig *rest.Config) error {
 	subs[chnv1alpha1.ChannelTypeNamespace] = nssub.GetDefaultSubscriber()
 	subs[chnv1alpha1.ChannelTypeHelmRepo] = hrsub.GetDefaultSubscriber()
 	subs["github"] = ghsub.GetDefaultSubscriber()
-	subs[chnv1alpha1.ChannelTypeObjectBucket] = obs.GetDefaultSubscriber()
+	subs[chnv1alpha1.ChannelTypeObjectBucket] = ossub.GetDefaultSubscriber()
 
 	return add(mgr, newReconciler(mgr, hubclient, subs))
 }
@@ -259,7 +259,7 @@ func (r *ReconcileSubscription) doReconcile(instance *appv1alpha1.Subscription) 
 		err = r.ListAndDeployReferredObject(instance, gvk, obj)
 
 		if err != nil {
-			klog.Errorf("Can't deploy referred secret %v for subscription %v", subitem.ChannelSecret.GetName(), instance.GetName())
+			klog.Errorf("Can't deploy referred secret %v for subscription %v due to %v", subitem.ChannelSecret.GetName(), instance.GetName(), err)
 		}
 	}
 
@@ -269,7 +269,7 @@ func (r *ReconcileSubscription) doReconcile(instance *appv1alpha1.Subscription) 
 		err = r.ListAndDeployReferredObject(instance, gvk, obj)
 
 		if err != nil {
-			klog.Errorf("Can't deploy referred secret %v for subscription %v", obj.GetName(), instance.GetName())
+			klog.Errorf("Can't deploy referred configmap %v for subscription %v due to %v", obj.GetName(), instance.GetName(), err)
 		}
 	}
 

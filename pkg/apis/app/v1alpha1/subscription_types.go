@@ -30,6 +30,8 @@ var (
 	AnnotationSyncSource = SchemeGroupVersion.Group + "/sync-source"
 	// AnnotationRollingUpdateTarget target deployable to rolling update to
 	AnnotationRollingUpdateTarget = SchemeGroupVersion.Group + "/rollingupdate-target"
+	// AnnotationRollingUpdateMaxUnavailable defines max un available clusters during rolling update
+	AnnotationRollingUpdateMaxUnavailable = SchemeGroupVersion.Group + "/rollingupdate-maxunavaialble"
 	// AnnotationDeployables defines all deployables subscribed by the subscription
 	AnnotationDeployables = SchemeGroupVersion.Group + "/deployables"
 	// AnnotationHosting defines the subscription hosting the resource
@@ -161,7 +163,7 @@ type SubscriptionStatus struct {
 	Phase          SubscriptionPhase `json:"phase,omitempty"`
 	Message        string            `json:"message,omitempty"`
 	Reason         string            `json:"reason,omitempty"`
-	LastUpdateTime metav1.Time       `json:"lastUpdateTime"`
+	LastUpdateTime metav1.Time       `json:"lastUpdateTime,omitempty"`
 
 	// For endpoint, it is the status of subscription, key is packagename,
 	// For hub, it aggregates all status, key is cluster name
@@ -177,6 +179,7 @@ type SubscriptionStatus struct {
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.phase",description="subscription status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:resource:shortName=appsub
 type Subscription struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
