@@ -4,11 +4,12 @@ require (
 	github.com/IBM/multicloud-operators-channel v0.0.0-20191106021206-61ab358c6b28
 	github.com/IBM/multicloud-operators-deployable v0.0.0-20191106030805-be79868c4e0f
 	github.com/IBM/multicloud-operators-placementrule v0.0.0-20191106021205-80eeda99597f
-	github.com/IBM/multicloud-operators-subscription-release v0.0.0-20191121201707-9f6f9dc49f92
+	github.com/IBM/multicloud-operators-subscription-release v0.0.0-20191127022709-6dc2dc73dd87
 	github.com/aws/aws-sdk-go-v2 v0.15.0
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/ghodss/yaml v1.0.1-0.20180820084758-c7ce16629ff4
 	github.com/go-openapi/spec v0.19.0
+	github.com/google/go-cmp v0.3.1
 	github.com/onsi/gomega v1.5.0
 	github.com/operator-framework/operator-sdk v0.12.0
 	github.com/prometheus/common v0.4.1
